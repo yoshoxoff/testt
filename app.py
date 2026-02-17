@@ -10,7 +10,7 @@ else:
     st.error("Clé API manquante dans les secrets.")
 
 # Utilisation du modèle (Gemini 2.0 Flash est le standard actuel pour la rapidité)
-model = genai.GenerativeModel('gemini-2.0-flash')
+model = genai.GenerativeModel('gemini-2.5-flash')
 
 def generer_pdf(data):
     pdf = FPDF()
