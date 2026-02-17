@@ -131,7 +131,7 @@ def generer_pdf(data, numero_facture):
 
     # Hauteur fixe identique pour TOUTES les cellules d'en-tête
     HEADER_H = 12   # ← une seule valeur, toutes les cases font exactement ça
-    LINE_H   = 7    # ← hauteur des lignes articles (réduite)
+    LINE_H   = 4.5  # ← hauteur des lignes articles (compact)
 
     pdf.set_draw_color(150, 150, 150)
     pdf.set_line_width(0.3)
