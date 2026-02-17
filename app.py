@@ -11,7 +11,7 @@ else:
 
 # Utilisation du mode JSON natif de Gemini
 model = genai.GenerativeModel(
-    model_name='gemini-2.0-flash',
+    model_name='gemini-2.5-flash',
     generation_config={"response_mime_type": "application/json"}
 )
 
