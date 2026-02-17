@@ -17,10 +17,17 @@ model = genai.GenerativeModel('gemini-2.5-flash')
 # --- GÉNÉRATION NUMÉRO DE FACTURE ---
 def generer_numero_facture():
     now = datetime.datetime.now()
-    return f"FAC-{now.strftime('%Y%m')}-{random.randint(1000, 9999)}"
+    return f"{now.strftime('%Y%m')}-{random.randint(1000, 9999)}"
 
 
-# --- FONCTION GENERATION PDF PROFESSIONNELLE ---
+# --- CELLULE CENTRÉE VERTICALEMENT (helper) ---
+def cell_vcenter(pdf, x, y, w, h, txt, border=1, align='C', fill=False):
+    """Dessine une cellule à position absolue (x,y) de taille (w,h)."""
+    pdf.set_xy(x, y)
+    pdf.cell(w, h, txt, border, 0, align, fill)
+
+
+# --- FONCTION GENERATION PDF ---
 def generer_pdf(data, numero_facture):
     pdf = FPDF()
     pdf.add_page()
@@ -37,161 +44,222 @@ def generer_pdf(data, numero_facture):
         font = 'Arial'
         euro = chr(128)
 
-    # ── BANDE EN-TÊTE BLEUE ──────────────────────────────────────────────────
-    pdf.set_fill_color(30, 80, 160)
-    pdf.rect(0, 0, 210, 28, 'F')
-
-    pdf.set_font(font, 'B', 20)
-    pdf.set_text_color(255, 255, 255)
-    pdf.set_xy(15, 7)
-    pdf.cell(0, 12, "FACTURE", 0, 1, 'L')
-
-    pdf.set_font(font, '', 10)
-    pdf.set_xy(15, 17)
-    pdf.cell(0, 6, f"N° {numero_facture}  |  Date : {data.get('date', datetime.date.today().strftime('%d/%m/%Y'))}", 0, 1, 'L')
-
-    pdf.set_text_color(0, 0, 0)
-    pdf.ln(8)
-
-    # ── BLOC VENDEUR / ACHETEUR ───────────────────────────────────────────────
-    vendeur = data.get('vendeur', {})
+    vendeur  = data.get('vendeur', {})
     acheteur = data.get('acheteur', {})
+    date_str = data.get('date', datetime.date.today().strftime('%d/%m/%Y'))
+    taux_tva = data.get('taux_tva', 20)
 
-    y_start = pdf.get_y()
-
-    # Vendeur (gauche)
-    pdf.set_xy(15, y_start)
-    pdf.set_font(font, 'B', 9)
-    pdf.set_text_color(30, 80, 160)
-    pdf.cell(85, 6, "ÉMETTEUR", 0, 1, 'L')
+    # ── 1. INFOS VENDEUR (haut gauche) ───────────────────────────────────────
+    pdf.set_xy(15, 15)
+    pdf.set_font(font, 'B', 11)
     pdf.set_text_color(0, 0, 0)
-    pdf.set_font(font, 'B', 10)
-    pdf.set_x(15)
-    pdf.cell(85, 6, vendeur.get('nom', data.get('nom_magasin', 'N/A')), 0, 1, 'L')
+    pdf.cell(90, 6, vendeur.get('nom', data.get('nom_magasin', 'Mon Entreprise')), 0, 1, 'L')
     pdf.set_font(font, '', 9)
     for ligne in [
         vendeur.get('adresse', ''),
         vendeur.get('ville', ''),
+        vendeur.get('pays', 'France'),
+        vendeur.get('email', ''),
+        vendeur.get('telephone', ''),
         vendeur.get('siret', ''),
-        vendeur.get('tva_intra', ''),
     ]:
         if ligne:
             pdf.set_x(15)
-            pdf.cell(85, 5, ligne, 0, 1, 'L')
+            pdf.cell(90, 5, ligne, 0, 1, 'L')
 
-    # Acheteur (droite)
-    pdf.set_xy(110, y_start)
+    y_after_vendeur = pdf.get_y() + 5
+
+    # ── 2. BLOC MÉTA grisé (gauche) + DESTINATAIRE (droite) ──────────────────
+    y_meta = y_after_vendeur
+    lignes_meta = [
+        ("Date d'émission",    date_str),
+        ("Émis par",           vendeur.get('contact', vendeur.get('nom', ''))),
+        ("Délai de livraison", data.get('delai_livraison', 'À réception du paiement')),
+        ("Mode de livraison",  data.get('mode_livraison', '')),
+        ("Modalité de paiement", data.get('modalite_paiement', '30 jours')),
+    ]
+    lignes_meta = [(l, v) for l, v in lignes_meta if v]
+    meta_h = max(28, len(lignes_meta) * 6 + 6)
+
+    # Rectangle gris
+    pdf.set_fill_color(235, 235, 235)
+    pdf.rect(15, y_meta, 95, meta_h, 'F')
+
+    y_cur = y_meta + 4
+    for label, valeur in lignes_meta:
+        pdf.set_xy(17, y_cur)
+        pdf.set_font(font, '', 8)
+        pdf.set_text_color(80, 80, 80)
+        pdf.cell(40, 5, label, 0, 0, 'R')
+        pdf.set_text_color(0, 0, 0)
+        pdf.cell(2, 5, ' ', 0, 0)
+        pdf.cell(50, 5, valeur, 0, 0, 'L')
+        y_cur += 6
+
+    # Destinataire (droite)
+    y_dest = y_meta
+    pdf.set_xy(120, y_dest)
     pdf.set_font(font, 'B', 9)
-    pdf.set_text_color(30, 80, 160)
-    pdf.cell(85, 6, "DESTINATAIRE", 0, 0, 'L')
-    pdf.set_xy(110, y_start + 6)
     pdf.set_text_color(0, 0, 0)
-    pdf.set_font(font, 'B', 10)
-    pdf.cell(85, 6, acheteur.get('nom', 'Client'), 0, 0, 'L')
-    pdf.set_xy(110, y_start + 12)
+    pdf.cell(75, 6, "Destinataire", 0, 1, 'L')
+    y_dest += 6
     pdf.set_font(font, '', 9)
-    y_ach = y_start + 12
     for ligne in [
+        acheteur.get('entreprise', ''),
+        acheteur.get('nom', 'Client'),
         acheteur.get('adresse', ''),
         acheteur.get('ville', ''),
-        acheteur.get('siret', ''),
+        acheteur.get('pays', 'France'),
     ]:
         if ligne:
-            pdf.set_xy(110, y_ach)
-            pdf.cell(85, 5, ligne, 0, 0, 'L')
-            y_ach += 5
+            pdf.set_xy(120, y_dest)
+            pdf.cell(75, 5, ligne, 0, 0, 'L')
+            y_dest += 5
 
-    pdf.set_y(max(pdf.get_y(), y_ach) + 8)
-
-    # ── LIGNE SÉPARATRICE ─────────────────────────────────────────────────────
-    pdf.set_draw_color(30, 80, 160)
-    pdf.set_line_width(0.5)
-    pdf.line(15, pdf.get_y(), 195, pdf.get_y())
-    pdf.ln(5)
-
-    # ── EN-TÊTE TABLEAU ───────────────────────────────────────────────────────
-    pdf.set_fill_color(30, 80, 160)
-    pdf.set_text_color(255, 255, 255)
-    pdf.set_font(font, 'B', 10)
-    pdf.cell(15, 9, "Qté", 1, 0, 'C', True)
-    pdf.cell(105, 9, "Désignation", 1, 0, 'L', True)
-    pdf.cell(35, 9, f"PU TTC ({euro})", 1, 0, 'R', True)
-    pdf.cell(30, 9, f"Total ({euro})", 1, 1, 'R', True)
-
-    # ── LIGNES ARTICLES ───────────────────────────────────────────────────────
+    # ── 3. TITRE FACTURE (droite, sous destinataire) ──────────────────────────
+    y_titre = max(y_meta + meta_h, y_dest) + 6
+    pdf.set_xy(100, y_titre)
+    pdf.set_font(font, 'B', 14)
     pdf.set_text_color(0, 0, 0)
-    fill = False
-    for art in data.get('articles', []):
-        pdf.set_fill_color(245, 248, 255) if fill else pdf.set_fill_color(255, 255, 255)
+    pdf.cell(95, 8, f"Facture n\xb0{numero_facture}", 0, 0, 'R')
 
-        qte = art.get('quantite', 1)
-        prix_u = art.get('prix_unitaire_ttc', 0.0)
-        total_ligne = qte * prix_u
+    pdf.set_y(y_titre + 16)
 
-        y_before = pdf.get_y()
+    # ── 4. TABLEAU ────────────────────────────────────────────────────────────
+    col_w    = [65, 20, 20, 30, 20, 30]
+    col_hdrs = [
+        "Désignation des produits\nou prestations",
+        "Quantité",
+        "Unité",
+        f"Prix unitaire HT",
+        "TVA\napplicable",
+        f"TOTAL HT",
+    ]
+    HEADER_H = 14   # hauteur fixe de l'en-tête (2 lignes de 7)
+    ROW_H    = 8    # hauteur d'une ligne article
 
-        pdf.set_font(font, '', 9)
-        pdf.cell(15, 10, str(qte), 1, 0, 'C', fill)
-
-        x_after_qte = pdf.get_x()
-        pdf.multi_cell(105, 10, art.get('nom', ''), 1, 'L', fill)
-        y_after = pdf.get_y()
-        hauteur = y_after - y_before
-
-        pdf.set_xy(x_after_qte + 105, y_before)
-        pdf.cell(35, hauteur, f"{prix_u:.2f}", 1, 0, 'R', fill)
-        pdf.cell(30, hauteur, f"{total_ligne:.2f}", 1, 1, 'R', fill)
-        pdf.set_y(y_after)
-
-        fill = not fill
-
-    pdf.ln(5)
-
-    # ── BLOC TOTAUX ───────────────────────────────────────────────────────────
-    pdf.set_draw_color(200, 200, 200)
+    pdf.set_draw_color(150, 150, 150)
     pdf.set_line_width(0.3)
 
-    pdf.set_font(font, '', 10)
-    pdf.set_x(120)
-    pdf.cell(45, 8, "Sous-total HT", 0, 0, 'R')
-    pdf.cell(30, 8, f"{data.get('total_ht', 0.0):.2f} {euro}", 1, 1, 'R')
+    # En-tête : chaque colonne dessinée à position absolue
+    y_th = pdf.get_y()
+    pdf.set_fill_color(200, 210, 230)
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font(font, 'B', 8)
 
-    pdf.set_x(120)
-    pdf.cell(45, 8, f"TVA ({data.get('taux_tva', 20)}%)", 0, 0, 'R')
-    pdf.cell(30, 8, f"{data.get('total_tva', 0.0):.2f} {euro}", 1, 1, 'R')
+    x = 15
+    for i, (hdr, w) in enumerate(zip(col_hdrs, col_w)):
+        pdf.set_xy(x, y_th)
+        pdf.multi_cell(w, HEADER_H / 2, hdr, 1, 'C', True)
+        # multi_cell avance Y : on doit dessiner les colonnes suivantes
+        # depuis la même y_th donc on les repositionne
+        x += w
 
-    pdf.set_fill_color(30, 80, 160)
-    pdf.set_text_color(255, 255, 255)
-    pdf.set_font(font, 'B', 11)
-    pdf.set_x(120)
-    pdf.cell(45, 10, "TOTAL TTC", 0, 0, 'R', True)
-    pdf.cell(30, 10, f"{data.get('total_ttc', 0.0):.2f} {euro}", 1, 1, 'R', True)
+    # Après l'en-tête, forcer Y à y_th + HEADER_H
+    pdf.set_y(y_th + HEADER_H)
+
+    # Lignes articles
+    pdf.set_font(font, '', 9)
+    pdf.set_text_color(0, 0, 0)
+    fill = False
+
+    for art in data.get('articles', []):
+        qte     = art.get('quantite', 1)
+        unite   = art.get('unite', 'pce.')
+        prix_ht = art.get('prix_unitaire_ht',
+                  round(art.get('prix_unitaire_ttc', 0) / (1 + taux_tva / 100), 2))
+        total_ht_ligne = round(qte * prix_ht, 2)
+        nom     = art.get('nom', '')
+
+        pdf.set_fill_color(245, 248, 255) if fill else pdf.set_fill_color(255, 255, 255)
+
+        y_row = pdf.get_y()
+
+        # Désignation avec retour à la ligne auto
+        pdf.set_xy(15, y_row)
+        pdf.multi_cell(col_w[0], ROW_H, nom, 1, 'L', fill)
+        y_row_end = pdf.get_y()
+        row_height = y_row_end - y_row
+
+        # Autres colonnes à hauteur dynamique
+        x = 15 + col_w[0]
+        vals   = [str(qte), unite, f"{prix_ht:.2f} {euro}", f"{taux_tva}%", f"{total_ht_ligne:.2f} {euro}"]
+        aligns = ['C', 'C', 'R', 'C', 'R']
+        for j, (v, a, w) in enumerate(zip(vals, aligns, col_w[1:])):
+            cell_vcenter(pdf, x, y_row, w, row_height, v, border=1, align=a, fill=fill)
+            x += w
+
+        pdf.set_y(y_row_end)
+        fill = not fill
+
+    # Lignes vides (esthétique — minimum 4 lignes visibles)
+    nb_vides = max(0, 4 - len(data.get('articles', [])))
+    for _ in range(nb_vides):
+        y_row = pdf.get_y()
+        x = 15
+        for w in col_w:
+            cell_vcenter(pdf, x, y_row, w, ROW_H, '', border=1)
+            x += w
+        pdf.set_y(y_row + ROW_H)
+
+    pdf.ln(5)
+
+    # ── 5. BAS : signature gauche + totaux droite ─────────────────────────────
+    y_bas = pdf.get_y()
+
+    # Signature
+    pdf.set_xy(15, y_bas)
+    pdf.set_font(font, '', 8)
+    pdf.set_text_color(80, 80, 80)
+    offre = data.get('offre_valide', '')
+    if offre:
+        pdf.cell(90, 6, f"Offre valable jusqu'au {offre}", 0, 1, 'L')
+    pdf.set_xy(15, pdf.get_y() + 6)
+    pdf.cell(90, 6, "Signature", 0, 1, 'L')
+
+    # Totaux
+    total_ht  = data.get('total_ht', 0.0)
+    total_tva = data.get('total_tva', 0.0)
+    frais     = data.get('frais_port', 0.0)
+    total_ttc = data.get('total_ttc', 0.0)
 
     pdf.set_text_color(0, 0, 0)
+    y_tot = y_bas
+
+    def ligne_total(label, valeur, bold=False):
+        nonlocal y_tot
+        pdf.set_xy(105, y_tot)
+        pdf.set_font(font, 'B' if bold else '', 9)
+        pdf.cell(55, 7, label, 0, 0, 'L')
+        pdf.cell(30, 7, f"{valeur:.2f} {euro}", 0, 0, 'R')
+        y_tot += 7
+
+    ligne_total("Total HT",  total_ht)
+    ligne_total("TVA",        total_tva)
+    if frais:
+        ligne_total("Frais de port", frais)
+
+    # Séparateur avant TTC
+    pdf.set_draw_color(0, 0, 0)
+    pdf.set_line_width(0.5)
+    pdf.line(105, y_tot, 195, y_tot)
+    y_tot += 2
+    ligne_total("Total TTC", total_ttc, bold=True)
+
     pdf.ln(10)
 
-    # ── MENTIONS LÉGALES ──────────────────────────────────────────────────────
-    pdf.set_draw_color(30, 80, 160)
-    pdf.set_line_width(0.5)
+    # ── 6. MENTIONS LÉGALES ───────────────────────────────────────────────────
+    pdf.set_draw_color(180, 180, 180)
+    pdf.set_line_width(0.3)
     pdf.line(15, pdf.get_y(), 195, pdf.get_y())
-    pdf.ln(4)
-
+    pdf.ln(3)
     pdf.set_font(font, '', 7)
-    pdf.set_text_color(100, 100, 100)
-    mentions = (
-        "Facture générée automatiquement. "
-        "TVA non applicable, art. 293 B du CGI — si micro-entrepreneur. "
-        "En cas de retard de paiement, des pénalités de retard seront appliquées "
-        "conformément aux articles L.441-10 et suivants du Code de commerce. "
-        "Indemnité forfaitaire pour frais de recouvrement : 40 EUR."
-    )
-    pdf.multi_cell(0, 4, mentions, 0, 'L')
-
-    # ── PIED DE PAGE ──────────────────────────────────────────────────────────
-    pdf.set_y(-15)
-    pdf.set_font(font, '', 7)
-    pdf.set_text_color(150, 150, 150)
-    pdf.cell(0, 5, f"Facture N° {numero_facture} — {data.get('nom_magasin', '')} — Page 1/1", 0, 0, 'C')
+    pdf.set_text_color(120, 120, 120)
+    pdf.multi_cell(0, 4,
+        "En cas de retard de paiement, des pénalités de retard seront appliquées conformément aux articles "
+        "L.441-10 et suivants du Code de commerce. Indemnité forfaitaire pour frais de recouvrement : 40 EUR. "
+        "TVA non applicable, art. 293 B du CGI si micro-entrepreneur.",
+        0, 'L')
 
     if font == 'Arial':
         return pdf.output(dest='S').encode('latin-1')
@@ -199,7 +267,7 @@ def generer_pdf(data, numero_facture):
         return pdf.output(dest='S')
 
 
-# ── INTERFACE STREAMLIT ──────────────────────────────────────────────────────
+# ── INTERFACE STREAMLIT ───────────────────────────────────────────────────────
 st.set_page_config(page_title="Scanner de Tickets Pro", page_icon="🧾", layout="centered")
 
 st.markdown("""
@@ -223,36 +291,46 @@ if fichier_image is not None:
                 import PIL.Image
                 import io
 
-                # Compression image
                 img = PIL.Image.open(fichier_image)
                 img.thumbnail((1024, 1024))
                 buffer = io.BytesIO()
                 img.save(buffer, format='JPEG', quality=85)
                 img_bytes = buffer.getvalue()
 
-                # Prompt enrichi
                 prompt = """Analyse ce ticket de caisse et retourne UNIQUEMENT un objet JSON valide, sans texte autour, avec cette structure exacte :
 {
   "nom_magasin": "string",
-  "date": "string (format JJ/MM/AAAA si possible)",
+  "date": "string (format JJ/MM/AAAA)",
   "taux_tva": 20,
+  "delai_livraison": "string (si visible, sinon 'À réception du paiement')",
+  "mode_livraison": "string (si visible, sinon vide)",
+  "modalite_paiement": "string (si visible, sinon '30 jours')",
+  "offre_valide": "string (date si visible, sinon vide)",
+  "frais_port": 0.00,
   "vendeur": {
-    "nom": "string (nom du magasin/entreprise)",
-    "adresse": "string (adresse si visible, sinon vide)",
-    "ville": "string (ville + code postal si visible, sinon vide)",
-    "siret": "string (SIRET si visible, sinon vide)",
-    "tva_intra": "string (numéro TVA intracommunautaire si visible, sinon vide)"
+    "nom": "string",
+    "adresse": "string (si visible, sinon vide)",
+    "ville": "string (si visible, sinon vide)",
+    "pays": "France",
+    "email": "string (si visible, sinon vide)",
+    "telephone": "string (si visible, sinon vide)",
+    "contact": "string (nom contact si visible, sinon vide)",
+    "siret": "string (si visible, sinon vide)",
+    "tva_intra": "string (si visible, sinon vide)"
   },
   "acheteur": {
+    "entreprise": "string (si visible, sinon vide)",
     "nom": "string (nom client si visible, sinon 'Client')",
-    "adresse": "string (adresse si visible, sinon vide)",
-    "ville": "string (ville si visible, sinon vide)",
-    "siret": "string (SIRET si visible, sinon vide)"
+    "adresse": "string (si visible, sinon vide)",
+    "ville": "string (si visible, sinon vide)",
+    "pays": "France"
   },
   "articles": [
     {
       "nom": "string",
       "quantite": 1,
+      "unite": "pce.",
+      "prix_unitaire_ht": 0.00,
       "prix_unitaire_ttc": 0.00
     }
   ],
