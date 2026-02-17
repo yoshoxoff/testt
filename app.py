@@ -4,6 +4,7 @@ import google.generativeai as genai
 import json
 
 # --- CONFIGURATION SÉCURISÉE ---
+# Utilise les "Secrets" de Streamlit Cloud pour ta clé API
 if "GEMINI_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 else:
@@ -11,17 +12,19 @@ else:
 
 model = genai.GenerativeModel('gemini-2.5-flash')
 
-# --- FONCTION GENERATION PDF ---
+# --- FONCTION GENERATION PDF (MÉTHODE UNICODE) ---
 def generer_pdf(data):
     pdf = FPDF()
     pdf.add_page()
     
+    # CHARGEMENT DE LA POLICE UNICODE depuis le dossier fonts/
     try:
-        pdf.add_font('DejaVu', '', 'fonts/DejaVuSans.ttf', uni=True)
-        pdf.add_font('DejaVu', 'B', 'fonts/DejaVuSans-Bold.ttf', uni=True)
+        pdf.add_font('DejaVu', '', 'fonts/DejaVuSans.ttf')
+        pdf.add_font('DejaVu', 'B', 'fonts/DejaVuSans-Bold.ttf')
         font_name = 'DejaVu'
         use_chr128 = False
     except:
+        # Repli sur Arial avec chr(128) si les fichiers sont absents
         font_name = 'Arial'
         use_chr128 = True
     
@@ -34,55 +37,48 @@ def generer_pdf(data):
     pdf.cell(0, 10, f"Date: {data['date']}", 0, 1)
     pdf.ln(5)
 
-    # Tableau - En-tête
+    # Tableau
     pdf.set_fill_color(240, 240, 240)
     pdf.set_font(font_name, 'B', 12)
-    pdf.cell(130, 10, "Article", 1, 0, 'L', True)
+    pdf.cell(100, 10, "Article", 1, 0, 'L', True)
     pdf.cell(40, 10, "Prix TTC", 1, 1, 'R', True)
 
+    # Symbole euro
     euro = chr(128) if use_chr128 else "€"
+    
     pdf.set_font(font_name, '', 12)
-
-    # --- BOUCLE ARTICLES AVEC RETOUR À LA LIGNE ---
     for art in data['articles']:
-        # On mémorise la position X et Y avant d'écrire l'article
-        x_start = pdf.get_x()
-        y_start = pdf.get_y()
-        
-        # MultiCell pour le nom (largeur 130)
-        # Ça revient à la ligne tout seul si c'est trop long
-        pdf.multi_cell(130, 10, art['nom'], border=1)
-        
-        # On calcule la position Y après le texte pour connaître la hauteur
-        y_end = pdf.get_y()
-        h_cell = y_end - y_start
-        
-        # On se replace à droite de la cellule qu'on vient de faire pour mettre le prix
-        pdf.set_xy(x_start + 130, y_start)
-        
-        # Cellule du prix avec la même hauteur (h_cell) pour que les bordures s'alignent
-        pdf.cell(40, h_cell, f"{art['prix_unitaire_ttc']:.2f} {euro}", 1, 1, 'R')
+        y_before = pdf.get_y()
+        pdf.multi_cell(100, 10, art['nom'], 1)
+        y_after = pdf.get_y()
+        pdf.set_xy(110, y_before)
+        hauteur = y_after - y_before
+        pdf.cell(40, hauteur, f"{art['prix_unitaire_ttc']:.2f} {euro}", 1, 1, 'R')
+        pdf.set_y(y_after)
 
     pdf.ln(5)
     
     # Totaux
-    pdf.set_font(font_name, '', 12)
-    pdf.cell(130, 10, "TOTAL HT", 0, 0, 'R')
+    pdf.cell(100, 10, "TOTAL HT", 0, 0, 'R')
     pdf.cell(40, 10, f"{data['total_ht']:.2f} {euro}", 1, 1, 'R')
     
-    pdf.cell(130, 10, f"TVA ({data['taux_tva']}%)", 0, 0, 'R')
+    pdf.cell(100, 10, f"TVA ({data['taux_tva']}%)", 0, 0, 'R')
     pdf.cell(40, 10, f"{data['total_tva']:.2f} {euro}", 1, 1, 'R')
     
     pdf.set_font(font_name, 'B', 12)
-    pdf.cell(130, 10, "TOTAL TTC", 0, 0, 'R')
+    pdf.cell(100, 10, "TOTAL TTC", 0, 0, 'R')
     pdf.cell(40, 10, f"{data['total_ttc']:.2f} {euro}", 1, 1, 'R')
     
-    # Sortie binaire
-    return pdf.output(dest='S')
+    # Gestion du retour selon la police utilisée
+    if use_chr128:
+        return pdf.output(dest='S').encode('latin-1')
+    else:
+        return pdf.output(dest='S')
 
 # --- INTERFACE STREAMLIT ---
 st.set_page_config(page_title="Scanner de Tickets Pro", page_icon="🧾")
 st.title("🧾 Convertisseur Ticket en Facture")
+st.write("Téléchargez une photo de votre ticket, l'IA s'occupe du reste.")
 
 fichier_image = st.file_uploader("Choisissez une photo de ticket (JPG, PNG)", type=['jpg', 'jpeg', 'png'])
 
@@ -92,7 +88,10 @@ if fichier_image is not None:
     if st.button("Analyser et Générer la Facture"):
         with st.spinner("L'IA analyse les montants et la TVA..."):
             try:
+                # 1. Préparation de l'image pour Gemini
                 img_bytes = fichier_image.getvalue()
+                
+                # 2. Appel réel à Gemini (Prompt optimisé)
                 prompt = """Analyse ce ticket de caisse. 
                 Retourne UNIQUEMENT un objet JSON avec cette structure :
                 {
@@ -105,10 +104,14 @@ if fichier_image is not None:
                   "total_ttc": float
                 }"""
                 
+                # Correction de l'envoi d'image (format liste pour Gemini)
                 response = model.generate_content([prompt, {"mime_type": "image/jpeg", "data": img_bytes}])
+                
+                # Nettoyage de la réponse pour extraire le JSON
                 texte_reponse = response.text.replace('```json', '').replace('```', '').strip()
                 resultats_ia = json.loads(texte_reponse)
                 
+                # 3. Génération du PDF
                 pdf_output = generer_pdf(resultats_ia)
                 
                 st.success("Analyse terminée !")
@@ -120,3 +123,4 @@ if fichier_image is not None:
                 )
             except Exception as e:
                 st.error(f"Erreur lors de l'analyse : {e}")
+                st.info("Astuce : Vérifie que ta clé API est correcte et que le fichier DejaVuSans.ttf est bien sur GitHub.")
