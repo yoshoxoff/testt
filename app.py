@@ -10,7 +10,7 @@ if "GEMINI_API_KEY" in st.secrets:
 else:
     st.error("Clé API manquante. Configurez GEMINI_API_KEY dans les secrets.")
 
-model = genai.GenerativeModel('gemini-2.0-flash')
+model = genai.GenerativeModel('gemini-2.5-flash')
 
 # --- FONCTION GENERATION PDF (MÉTHODE UNICODE) ---
 def generer_pdf(data):
