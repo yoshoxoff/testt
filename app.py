@@ -1,110 +1,241 @@
 import streamlit as st
+
 from fpdf import FPDF
+
 import google.generativeai as genai
+
 import json
 
-# --- CONFIGURATION API ---
+
+
+# --- CONFIGURATION SÉCURISÉE ---
+
+# Utilise les "Secrets" de Streamlit Cloud pour ta clé API
+
 if "GEMINI_API_KEY" in st.secrets:
+
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+
 else:
-    st.error("Clé API manquante dans les Secrets.")
+
+    st.error("Clé API manquante. Configurez GEMINI_API_KEY dans les secrets.")
+
+
 
 model = genai.GenerativeModel('gemini-2.5-flash')
 
+
+
+# --- FONCTION GENERATION PDF (MÉTHODE UNICODE) ---
+
 def generer_pdf(data):
-    # Initialisation FPDF simple
-    pdf = FPDF(orientation='P', unit='mm', format='A4')
+
+    pdf = FPDF()
+
     pdf.add_page()
+
     
-    # --- GESTION DES POLICES (SÉCURITÉ MAX) ---
-    font_family = "Arial"
-    euro_symbol = "EUR"
-    
+
+    # CHARGEMENT DE LA POLICE UNICODE depuis le dossier fonts/
+
     try:
-        # On tente d'enregistrer les deux variantes
-        pdf.add_font('DejaVu', '', 'fonts/DejaVuSans.ttf', uni=True)
-        pdf.add_font('DejaVu', 'B', 'fonts/DejaVuSans-Bold.ttf', uni=True)
-        font_family = "DejaVu"
-        euro_symbol = "€"
-    except Exception as e:
-        # Si ça foire, on ne crash pas, on utilise Arial (toujours présent)
-        font_family = "Arial"
-        euro_symbol = "EUR"
 
-    # --- CONTENU DU PDF ---
-    # Titre
-    pdf.set_font(font_family, 'B', 16)
-    pdf.cell(0, 15, f"FACTURE : {data.get('nom_magasin', 'COMMERCE')}", ln=True, align='C')
+        pdf.add_font('DejaVu', '', 'fonts/DejaVuSans.ttf')
+
+        pdf.add_font('DejaVu', 'B', 'fonts/DejaVuSans-Bold.ttf')
+
+        font_name = 'DejaVu'
+
+        use_chr128 = False
+
+    except:
+
+        # Repli sur Arial avec chr(128) si les fichiers sont absents
+
+        font_name = 'Arial'
+
+        use_chr128 = True
+
+    
+
+    # En-tête
+
+    pdf.set_font(font_name, 'B', 16)
+
+    pdf.cell(0, 10, f"FACTURE : {data['nom_magasin']}", 0, 1, 'C')
+
+    pdf.ln(10)
+
+    
+
+    pdf.set_font(font_name, '', 12)
+
+    pdf.cell(0, 10, f"Date: {data['date']}", 0, 1)
+
     pdf.ln(5)
 
-    # Date
-    pdf.set_font(font_family, '', 10)
-    pdf.cell(0, 10, f"Date : {data.get('date', 'N/A')}", ln=True, align='R')
+
+
+    # Tableau
+
+    pdf.set_fill_color(240, 240, 240)
+
+    pdf.set_font(font_name, 'B', 12)
+
+    pdf.cell(100, 10, "Article", 1, 0, 'L', True)
+
+    pdf.cell(40, 10, "Prix TTC", 1, 1, 'R', True)
+
+
+
+    # Symbole euro
+
+    euro = chr(128) if use_chr128 else "€"
+
+    
+
+    pdf.set_font(font_name, '', 12)
+
+    for art in data['articles']:
+
+        pdf.cell(100, 10, art['nom'], 1)
+
+        pdf.cell(40, 10, f"{art['prix_unitaire_ttc']:.2f} {euro}", 1, 1, 'R')
+
+
+
     pdf.ln(5)
 
-    # En-tête Tableau
-    pdf.set_fill_color(230, 230, 230)
-    pdf.set_font(font_family, 'B', 11)
-    pdf.cell(130, 10, " Description", border=1, fill=True)
-    pdf.cell(50, 10, f"Prix TTC ({euro_symbol})", border=1, fill=True, ln=True, align='C')
-
-    # Articles (Gestion Texte Long)
-    pdf.set_font(font_family, '', 10)
-    for art in data.get('articles', []):
-        nom = str(art.get('nom', 'Article'))
-        prix = f"{float(art.get('prix_unitaire_ttc', 0)):.2f}"
-        
-        # On mémorise la position pour aligner le prix avec le nom (si multi-ligne)
-        x = pdf.get_x()
-        y = pdf.get_y()
-        
-        # Nom de l'article (MultiCell pour le texte long)
-        pdf.multi_cell(130, 8, nom, border=1)
-        new_y = pdf.get_y()
-        h = new_y - y # Hauteur calculée
-        
-        # Cellule du Prix
-        pdf.set_xy(x + 130, y)
-        pdf.cell(50, h, prix, border=1, ln=True, align='R')
+    
 
     # Totaux
-    pdf.ln(10)
-    total_ttc = sum(float(a.get('prix_unitaire_ttc', 0)) for a in data.get('articles', []))
+
+    pdf.cell(100, 10, "TOTAL HT", 0, 0, 'R')
+
+    pdf.cell(40, 10, f"{data['total_ht']:.2f} {euro}", 1, 1, 'R')
+
     
-    pdf.set_font(font_family, 'B', 12)
-    pdf.set_x(120)
-    pdf.cell(30, 10, "TOTAL TTC", border=0)
-    pdf.cell(40, 10, f"{total_ttc:.2f} {euro_symbol}", border=1, align='R', fill=True)
 
-    # Sortie binaire brute (S)
-    return pdf.output(dest='S')
+    pdf.cell(100, 10, f"TVA ({data['taux_tva']}%)", 0, 0, 'R')
 
-# --- INTERFACE ---
-st.title("🧾 Scanner Pro v2.5")
+    pdf.cell(40, 10, f"{data['total_tva']:.2f} {euro}", 1, 1, 'R')
 
-file = st.file_uploader("Upload Image", type=['jpg', 'png', 'jpeg'])
+    
 
-if file:
-    st.image(file, width=200)
-    if st.button("Générer Facture"):
-        try:
-            with st.spinner("Analyse..."):
-                img_bytes = file.getvalue()
-                prompt = "Extraire JSON: nom_magasin, date, articles: [{nom, prix_unitaire_ttc}]"
+    pdf.set_font(font_name, 'B', 12)
+
+    pdf.cell(100, 10, "TOTAL TTC", 0, 0, 'R')
+
+    pdf.cell(40, 10, f"{data['total_ttc']:.2f} {euro}", 1, 1, 'R')
+
+    
+
+    # Gestion du retour selon la police utilisée
+
+    if use_chr128:
+
+        return pdf.output(dest='S').encode('latin-1')
+
+    else:
+
+        return pdf.output(dest='S')
+
+
+
+# --- INTERFACE STREAMLIT ---
+
+st.set_page_config(page_title="Scanner de Tickets Pro", page_icon="🧾")
+
+st.title("🧾 Convertisseur Ticket en Facture")
+
+st.write("Téléchargez une photo de votre ticket, l'IA s'occupe du reste.")
+
+
+
+fichier_image = st.file_uploader("Choisissez une photo de ticket (JPG, PNG)", type=['jpg', 'jpeg', 'png'])
+
+
+
+if fichier_image is not None:
+
+    st.image(fichier_image, caption="Ticket téléchargé", width=300)
+
+    
+
+    if st.button("Analyser et Générer la Facture"):
+
+        with st.spinner("L'IA analyse les montants et la TVA..."):
+
+            try:
+
+                # 1. Préparation de l'image pour Gemini
+
+                img_bytes = fichier_image.getvalue()
+
                 
-                response = model.generate_content([
-                    prompt, 
-                    {"mime_type": file.type, "data": img_bytes}
-                ])
+
+                # 2. Appel réel à Gemini (Prompt optimisé)
+
+                prompt = """Analyse ce ticket de caisse. 
+
+                Retourne UNIQUEMENT un objet JSON avec cette structure :
+
+                {
+
+                  "nom_magasin": "string",
+
+                  "date": "string",
+
+                  "taux_tva": float,
+
+                  "articles": [{"nom": "string", "prix_unitaire_ttc": float}],
+
+                  "total_ht": float,
+
+                  "total_tva": float,
+
+                  "total_ttc": float
+
+                }"""
+
                 
-                # Nettoyage JSON
-                txt = response.text.replace('```json', '').replace('```', '').strip()
-                res = json.loads(txt)
+
+                # Correction de l'envoi d'image (format liste pour Gemini)
+
+                response = model.generate_content([prompt, {"mime_type": "image/jpeg", "data": img_bytes}])
+
                 
-                pdf_data = generer_pdf(res)
+
+                # Nettoyage de la réponse pour extraire le JSON
+
+                texte_reponse = response.text.replace('```json', '').replace('```', '').strip()
+
+                resultats_ia = json.loads(texte_reponse)
+
                 
-                if pdf_data:
-                    st.success("PDF généré !")
-                    st.download_button("📥 Télécharger", pdf_data, "facture.pdf", "application/pdf")
-        except Exception as e:
-            st.error(f"Erreur : {e}")
+
+                # 3. Génération du PDF
+
+                pdf_output = generer_pdf(resultats_ia)
+
+                
+
+                st.success("Analyse terminée !")
+
+                st.download_button(
+
+                    label="📥 Télécharger la Facture PDF",
+
+                    data=pdf_output,
+
+                    file_name="facture_automatique.pdf",
+
+                    mime="application/pdf"
+
+                )
+
+            except Exception as e:
+
+                st.error(f"Erreur lors de l'analyse : {e}")
+
+                st.info("Astuce : Vérifie que ta clé API est correcte et que le fichier DejaVuSans.ttf est bien sur GitHub.")
